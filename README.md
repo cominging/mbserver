@@ -154,59 +154,77 @@ func (s *Server) RegisterFunctionHandler(funcCode uint8, function func(*Server, 
 Example of overriding the default ReadDiscreteInputs funtion:
 
 ```
-serv := NewServer()
+package main
 
-// Override ReadDiscreteInputs function.
-serv.RegisterFunctionHandler(2,
-    func(s *Server, frame Framer) ([]byte, *Exception) {
-        register, numRegs, endRegister := frame.registerAddressAndNumber()
-        // Check the request is within the allocated memory
-        if endRegister > 65535 {
-            return []byte{}, &IllegalDataAddress
-        }
-        dataSize := numRegs / 8
-        if (numRegs % 8) != 0 {
-            dataSize++
-        }
-        data := make([]byte, 1+dataSize)
-        data[0] = byte(dataSize)
-        for i := range s.DiscreteInputs[register:endRegister] {
-            // Return all 1s, regardless of the value in the DiscreteInputs array.
-            shift := uint(i) % 8
-            data[1+i/8] |= byte(1 << shift)
-        }
-        return data, &Success
-    })
+import (
+	"encoding/binary"
+	"fmt"
+	"log"
+	"time"
 
-// Start the server.
-err := serv.ListenTCP("localhost:4321")
-if err != nil {
-    log.Printf("%v\n", err)
-    return
+	"github.com/goburrow/modbus"
+	"github.com/tbrandon/mbserver"
+)
+
+func main() {
+	serv := mbserver.NewServer()
+
+	// Override ReadDiscreteInputs function.
+	serv.RegisterFunctionHandler(2,
+		func(s *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
+			frameData := frame.GetData()
+			register := int(binary.BigEndian.Uint16(frameData[0:2]))
+			numRegs := int(binary.BigEndian.Uint16(frameData[2:4]))
+			endRegister := register + numRegs
+
+			// Check the request is within the allocated memory
+			if endRegister > 65535 {
+				return []byte{}, &mbserver.IllegalDataAddress
+			}
+			dataSize := numRegs / 8
+			if (numRegs % 8) != 0 {
+				dataSize++
+			}
+			data := make([]byte, 1+dataSize)
+			data[0] = byte(dataSize)
+			for i := range s.DiscreteInputs[register:endRegister] {
+				// Return all 1s, regardless of the value in the DiscreteInputs array.
+				shift := uint(i) % 8
+				data[1+i/8] |= byte(1 << shift)
+			}
+			return data, &mbserver.Success
+		})
+
+	// Start the server.
+	err := serv.ListenTCP("localhost:4321")
+	if err != nil {
+		log.Printf("%v\n", err)
+		return
+	}
+	defer serv.Close()
+
+	// Wait for the server to start
+	time.Sleep(1 * time.Millisecond)
+
+	// Example of a client reading from the server started above.
+	// Connect a client.
+	handler := modbus.NewTCPClientHandler("localhost:4321")
+	err = handler.Connect()
+	if err != nil {
+		log.Printf("%v\n", err)
+		return
+	}
+	defer handler.Close()
+	client := modbus.NewClient(handler)
+
+	// Read discrete inputs.
+	results, err := client.ReadDiscreteInputs(0, 16)
+	if err != nil {
+		log.Printf("%v\n", err)
+	}
+
+	fmt.Printf("results %v\n", results)
 }
-defer serv.Close()
-
-// Wait for the server to start
-time.Sleep(1 * time.Millisecond)
-
-// Example of a client reading from the server started above.
-// Connect a client.
-handler := modbus.NewTCPClientHandler("localhost:4321")
-err = handler.Connect()
-if err != nil {
-    log.Printf("%v\n", err)
-    return
-}
-defer handler.Close()
-client := modbus.NewClient(handler)
-
-// Read discrete inputs.
-results, err := client.ReadDiscreteInputs(0, 16)
-if err != nil {
-    log.Printf("%v\n", err)
-}
-
-fmt.Printf("results %v\n", results)
 ```
 Output:
 ```
